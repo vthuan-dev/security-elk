@@ -1,0 +1,19 @@
+name: Network Traffic Surge
+type: spike
+index: packetbeat-*
+timeframe:
+  minutes: 5
+spike_height: 3
+spike_type: up
+cardinality_field: source.ip
+
+filter:
+- query:
+    query_string:
+      query: "network.transport:tcp OR network.transport:udp"
+
+alert:
+- debug
+alert_text: |
+  Unusual surge in network traffic detected.
+

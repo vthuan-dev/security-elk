@@ -1,0 +1,22 @@
+name: Possible Port Scan Detected
+type: frequency
+index: packetbeat-*
+num_events: 100
+timeframe:
+  minutes: 2
+
+filter:
+- query:
+    query_string:
+      query: "network.transport:tcp AND destination.port:([1 TO 1024])"
+
+query_key: source.ip
+realert:
+  minutes: 10
+
+alert:
+- debug
+alert_text: |
+  Potential port scan from {0} within 2 minutes across privileged ports.
+alert_text_args: [query_key]
+

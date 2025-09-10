@@ -1,0 +1,24 @@
+name: Failed Login Attempts
+type: frequency
+index: filebeat-*
+num_events: 3
+timeframe:
+  minutes: 2
+
+filter:
+- query:
+    query_string:
+      query: "auth_message:*Failed*password*"
+
+alert:
+- "debug"
+
+alert_text: |
+  Multiple failed login attempts detected!
+  
+  Event Details:
+  - Number of failed attempts: {0}
+  - Time window: 2 minutes
+  - Source: ElastAlert Security Monitoring
+  
+  Please investigate immediately.

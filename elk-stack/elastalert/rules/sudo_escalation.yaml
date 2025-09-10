@@ -1,0 +1,14 @@
+name: Suspicious Sudo Activity
+type: any
+index: filebeat-*
+
+filter:
+- query:
+    query_string:
+      query: "system.auth.sudo.error:* OR message:*sudo*session*opened*"
+
+alert:
+- debug
+alert_text: |
+  Suspicious sudo activity detected. Please review recent sudo events.
+
