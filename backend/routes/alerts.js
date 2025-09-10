@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const Incident = require('../models/Incident');
+const User = require('../models/User');
+const https = require('https');
 
 /**
  * @swagger
@@ -74,3 +76,74 @@ router.get('/', protect, async (req, res) => {
 });
 
 module.exports = router;
+
+/**
+ * Webhook để nhận alert từ ElastAlert và tự động tạo Incident
+ * Không yêu cầu auth vì được gọi nội bộ trong docker network
+ * POST /api/alerts/webhook
+ */
+router.post('/webhook', async (req, res) => {
+  try {
+    const payload = req.body || {};
+
+    // Map dữ liệu cơ bản
+    const title = payload.title || payload.rule_name || 'Security Alert';
+    const description = payload.description || payload.alert_text || 'Alert from ElastAlert';
+    const severity = (payload.severity || 'high').toLowerCase();
+    const category = payload.category || 'network_intrusion';
+
+    // Thu thập IPs nếu có
+    const ipCandidates = [];
+    if (Array.isArray(payload.ipAddresses)) ipCandidates.push(...payload.ipAddresses);
+    if (payload.source_ip) ipCandidates.push(payload.source_ip);
+    if (payload['source.ip']) ipCandidates.push(payload['source.ip']);
+    if (payload.query_key) ipCandidates.push(payload.query_key);
+    const uniqueIps = [...new Set(ipCandidates.filter(Boolean))];
+
+    // Resolve default owner (createdBy)
+    let ownerId = (req.user && req.user.id) || process.env.DEFAULT_INCIDENT_OWNER_ID;
+    if (!ownerId) {
+      // try find admin user as fallback
+      const adminUser = await User.findOne({ email: 'admin@security.local' }).select('_id').lean();
+      if (adminUser) ownerId = adminUser._id;
+    }
+
+    const incident = await Incident.create({
+      title,
+      description,
+      severity: ['low','medium','high','critical'].includes(severity) ? severity : 'high',
+      category,
+      source: 'automated',
+      ipAddresses: uniqueIps,
+      detectedAt: new Date(),
+      createdBy: ownerId
+    });
+
+    // Emit realtime tới dashboard
+    try {
+      const io = req.app.get('io');
+      io.to('dashboard').emit('incident_created', {
+        id: incident._id,
+        title: incident.title,
+        severity: incident.severity,
+        category: incident.category,
+        createdAt: incident.createdAt
+      });
+    } catch (e) {}
+
+    // Telegram notification (nếu cấu hình)
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    if (botToken && chatId) {
+      const text = encodeURIComponent(
+        `🚨 Incident: ${title}\nSeverity: ${severity}\nCategory: ${category}\nIPs: ${uniqueIps.join(', ') || 'N/A'}\nTime: ${new Date().toISOString()}`
+      );
+      const tgUrl = `https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${text}`;
+      https.get(tgUrl).on('error', () => {});
+    }
+
+    res.json({ success: true, id: incident._id });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Webhook error', error: error.message });
+  }
+});

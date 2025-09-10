@@ -13,7 +13,14 @@ filter:
       query: "network.transport:tcp OR network.transport:udp"
 
 alert:
-- debug
-alert_text: |
-  Unusual surge in network traffic detected.
+  - post
+http_post_url: "http://backend:5000/api/alerts/webhook"
+http_post_payload:
+  title: "Tăng đột biến lưu lượng mạng"
+  description: "Phát hiện surge traffic vượt 3x trong 5 phút"
+  severity: "high"
+  category: "ddos"
+  ipAddresses: []
+http_post_static_payload:
+  source: "automated"
 

@@ -1,22 +1,31 @@
 name: Possible Port Scan Detected
-type: frequency
+type: cardinality
 index: packetbeat-*
-num_events: 100
 timeframe:
   minutes: 2
 
 filter:
-- query:
-    query_string:
-      query: "network.transport:tcp AND destination.port:([1 TO 1024])"
+  - term:
+      event.dataset: "flow"
+  - term:
+      network.transport: "tcp"
 
 query_key: source.ip
+cardinality_field: destination.port
+min_cardinality: 20
 realert:
   minutes: 10
 
 alert:
-- debug
-alert_text: |
-  Potential port scan from {0} within 2 minutes across privileged ports.
-alert_text_args: [query_key]
+  - post
+http_post_url: "http://backend:5000/api/alerts/webhook"
+http_post_json: true
+http_post_all_values: true
+http_post_payload:
+  title: "Port scan detected"
+  description: "Multiple distinct destination ports within 2 minutes"
+  severity: "high"
+  category: "network_intrusion"
+http_post_static_payload:
+  source: "automated"
 

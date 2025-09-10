@@ -99,6 +99,9 @@ services:
       - MONGODB_URI=mongodb://admin:password123@mongodb:27017/security_incidents?authSource=admin
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - TELEGRAM_BOT_TOKEN=8214485437:AAGGu2Q8DvDhgz8SuNxUZUCi4OPWeECOl9s
+      - TELEGRAM_CHAT_ID=5840055926
+      - DEFAULT_INCIDENT_OWNER_ID=68c123ccb15b6f17cffa3350
     volumes:
       - ./backend:/app
       - /app/node_modules

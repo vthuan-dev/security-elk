@@ -8,7 +8,15 @@ filter:
       query: "system.auth.sudo.error:* OR message:*sudo*session*opened*"
 
 alert:
-- debug
-alert_text: |
-  Suspicious sudo activity detected. Please review recent sudo events.
+  - post
+http_post_url: "http://backend:5000/api/alerts/webhook"
+http_post_json: true
+http_post_all_values: true
+http_post_payload:
+  title: "Suspicious sudo activity"
+  description: "sudo session or error detected"
+  severity: "high"
+  category: "privilege_misuse"
+http_post_static_payload:
+  source: "automated"
 

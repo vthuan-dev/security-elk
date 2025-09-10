@@ -11,14 +11,13 @@ filter:
       query: "auth_message:*Failed*password*"
 
 alert:
-- "debug"
-
-alert_text: |
-  Multiple failed login attempts detected!
-  
-  Event Details:
-  - Number of failed attempts: {0}
-  - Time window: 2 minutes
-  - Source: ElastAlert Security Monitoring
-  
-  Please investigate immediately.
+  - post
+http_post_url: "http://backend:5000/api/alerts/webhook"
+http_post_payload:
+  title: "Nhiều lần đăng nhập thất bại"
+  description: "Failed logins >= 3 trong 2 phút"
+  severity: "high"
+  category: "authentication"
+  ipAddresses: []
+http_post_static_payload:
+  source: "automated"
