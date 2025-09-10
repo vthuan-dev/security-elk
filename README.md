@@ -1,148 +1,112 @@
 # Security Incident Response Dashboard
 
-Hệ thống giám sát, phát hiện và phản hồi sự cố bảo mật tự động dựa trên ELK Stack.
+Nền tảng giám sát – phát hiện – cảnh báo – phản ứng sự cố bảo mật thời gian gần thực dựa trên ELK Stack (Elasticsearch, Logstash, Kibana) và Dashboard UI (React/Node/MongoDB).
 
-## 🎯 Mục tiêu
+## 1) Thành phần & cổng dịch vụ
+- Elasticsearch: 9200
+- Kibana: 5601
+- Logstash: 5044/5000 (input), 9600 (API)
+- Backend API: 5001 (publish ra host; container chạy 5000)
+- Frontend Dashboard: 3000
+- MongoDB: 27017
 
-- Giám sát thời gian thực các hoạt động đáng ngờ
-- Phân tích và phân loại mối đe dọa
-- Cảnh báo tức thì qua email, Slack, Telegram
-- Trực quan hóa dữ liệu an ninh
-- Theo dõi phản ứng và lưu trữ sự kiện
+Các thành phần được điều phối bằng Docker Compose trong `docker-compose.yml`.
 
-## 🏗️ Kiến trúc hệ thống
+## 2) Yêu cầu
+- Ubuntu 20.04+ (host/VM)
+- Docker 24+, Docker Compose v2
+- Dung lượng trống tối thiểu 5GB
 
-```
-Attacker → User Device → Log Collector → Logstash → Elasticsearch → Kibana → Dashboard UI
-                                    ↓                    ↓
-                            Threat Detection    →    Alerting System
-```
-
-## 🛠️ Công nghệ sử dụng
-
-- **Frontend**: React.js, WebSocket
-- **Backend**: Node.js + Express
-- **Log Collection**: Filebeat, Auditbeat, Packetbeat
-- **Processing**: Logstash
-- **Storage & Search**: Elasticsearch
-- **Visualization**: Kibana
-- **Alerting**: ElastAlert
-- **Database**: MongoDB
-- **Infrastructure**: Docker, Ubuntu Server
-
-## 🚀 Cài đặt và chạy
-
-### Yêu cầu hệ thống
-- Docker và Docker Compose
-- Node.js 18+
-- Ubuntu 20.04+
-
-### Khởi chạy nhanh
-
-1. Clone repository:
+## 3) Khởi chạy nhanh
 ```bash
 git clone <repository-url>
 cd security1
+docker compose up -d
 ```
-
-2. Chạy toàn bộ hệ thống:
-```bash
-docker-compose up -d
-```
-
-3. Truy cập các dịch vụ:
-- Dashboard: http://localhost:3000
+Chờ ~1–2 phút cho healthchecks ổn định, sau đó truy cập:
+- Frontend: http://localhost:3000
 - Kibana: http://localhost:5601
 - Elasticsearch: http://localhost:9200
-- API Backend: http://localhost:5000
+- Backend API (host): http://localhost:5001
 
-## 📁 Cấu trúc dự án
+Kiểm tra nhanh:
+```bash
+curl -s http://localhost:5001/health | jq .
+docker compose ps
+```
 
+## 4) Luồng hoạt động
+1. Beats thu thập log → Logstash chuẩn hóa/làm giàu → Elasticsearch.
+2. Kibana phục vụ điều tra/ trực quan.
+3. ElastAlert2 khớp rule (port scan, ssh bruteforce, sudo, network surge) → gọi webhook `POST /api/alerts/webhook`.
+4. Backend tạo Incident (MongoDB), phát realtime (Socket.IO) và gửi Telegram (nếu cấu hình).
+5. Frontend hiển thị Dashboard/Incidents.
+
+## 5) Cấu hình cảnh báo Telegram
+Biến môi trường được đặt trong `docker-compose.yml` của service `backend`:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+Chỉ cần giữ nguyên (hoặc thay bằng của bạn), khi rule khớp → ElastAlert gọi webhook → Backend gửi Telegram tự động.
+
+## 6) Demo nhanh (3 ảnh báo cáo)
+Tạo lưu lượng từ máy tấn công (ví dụ Windows 192.168.1.15) tới VM/host 192.168.1.8:
+
+1) Port scan để kích hoạt rule (đủ ≥20 cổng trong 2 phút)
+```powershell
+nmap -Pn -sT -p 1-200 -T4 192.168.1.8
+```
+2) Kibana Discover xác nhận log (Chọn Last 5–15 minutes)
+- KQL: `event.dataset: flow AND source.ip: 192.168.1.15`
+
+3) Quan sát Incident + Telegram
+- Incidents: http://192.168.1.8:3000/incidents
+- Telegram: nhận tin “Port scan detected …”.
+
+SQLi demo (tùy chọn):
+```bash
+curl "http://192.168.1.8:3000/?q=' OR '1'='1" -I
+```
+Kibana filter: `event.dataset: http AND source.ip: 192.168.1.15`.
+
+## 7) Bộ rule ElastAlert2 tích hợp
+Các rule nằm tại `elk-stack/elastalert/rules/` và đã được nối webhook:
+- `port_scan.yaml`: cardinality theo `event.dataset: flow` (≥20 cổng/2 phút)
+- `ssh_bruteforce.yaml`: 10 lần thất bại/5 phút (source.ip)
+- `failed_login.yaml`: failed logins ≥3/2 phút
+- `sudo_escalation.yaml`: sudo session/error bất thường
+- `network_stress.yaml`: spike traffic
+
+Sau khi chỉnh rule, chạy:
+```bash
+docker compose restart elastalert
+```
+
+## 8) Troubleshooting nhanh
+- Nmap không thấy host: dùng `-Pn` hoặc đảm bảo VM ở Bridged/Port-Forwarding đúng.
+- Không thấy log nmap trong Kibana: chọn index `packetbeat*`, filter `event.dataset: flow`, time range 5–15 phút, kiểm `source.ip` đúng.
+- Không thấy Telegram: kiểm tra biến `TELEGRAM_BOT_TOKEN/CHAT_ID`, log backend và `docker logs elastalert`.
+- Frontend không gọi đúng API: backend publish ra host cổng 5001; nếu cần, chỉnh `REACT_APP_API_URL` → `http://localhost:5001`.
+
+## 9) Cấu trúc thư mục
 ```
 security1/
-├── backend/                 # Node.js API server
-├── frontend/               # React.js Dashboard
-├── elk-stack/             # ELK Stack configuration
-├── docker-compose.yml     # Docker orchestration
-├── scripts/               # Setup và utility scripts
-└── docs/                  # Documentation
+├── backend/                 # Node.js API server (Express, JWT, Socket.IO)
+├── frontend/                # React dashboard
+├── elk-stack/               # Elasticsearch/Logstash/Kibana/Beats/ElastAlert configs
+├── docker-compose.yml       # Orchestration
+├── scripts/                 # Demo scripts
+└── docs/                    # Tài liệu bổ sung
 ```
 
-## 🔧 Cấu hình
+## 10) Lưu ý bảo mật
+- Repo demo bật CORS `*` và CSP mở để thuận tiện test; siết lại allowlist khi production.
+- Bảo vệ webhook `/api/alerts/webhook` bằng token header hoặc allowlist mạng nội bộ khi triển khai thật.
+- Chuyển sang HTTPS/WSS end-to-end cho môi trường sản xuất.
 
-### Biến môi trường
-Tạo file `.env` từ `.env.example`:
-```bash
-cp .env.example .env
-```
-
-### Cấu hình cảnh báo
-- Email: Cấu hình SMTP trong `backend/config/email.js`
-- Slack: Thêm webhook URL trong `backend/config/slack.js`
-- Telegram: Thêm bot token trong `backend/config/telegram.js`
-
-## 📊 Tính năng chính
-
-### 1. Giám sát thời gian thực
-- Thu thập log từ nhiều nguồn
-- Phân tích hành vi bất thường
-- Phát hiện mối đe dọa tự động
-
-### 2. Dashboard trực quan
-- Biểu đồ thống kê sự cố
-- Bản đồ phân bố địa lý
-- Heatmap hoạt động
-- Timeline sự kiện
-
-### 3. Hệ thống cảnh báo
-- Email thông báo
-- Slack integration
-- Telegram bot
-- Webhook tùy chỉnh
-
-### 4. Quản lý sự cố
-- Phân loại mức độ nghiêm trọng
-- Ghi nhận xử lý
-- Báo cáo và kiểm toán
-
-## 🤖 Machine Learning (Tính năng nâng cao)
-
-- Phát hiện anomaly dựa trên hành vi
-- Gợi ý xử lý tự động
-- Học từ dữ liệu lịch sử
-
-## 🔐 Bảo mật
-
-- Xác thực đa yếu tố
-- Phân quyền người dùng
-- Mã hóa dữ liệu
-- Audit logging
-
-## 📈 Monitoring
-
-- Health check các dịch vụ
-- Performance metrics
-- Resource utilization
-- Error tracking
-
-## 🤝 Đóng góp
-
-1. Fork dự án
-2. Tạo feature branch
-3. Commit changes
-4. Push to branch
-5. Tạo Pull Request
-
-## 📄 License
-
-MIT License - xem file LICENSE để biết thêm chi tiết.
-
-## 📞 Hỗ trợ
-
-- Issues: GitHub Issues
-- Email: support@security-dashboard.com
-- Documentation: `/docs` folder
+## 11) Giấy phép & hỗ trợ
+- License: MIT
+- Issues/Support: tạo issue trong repo
 
 ---
-
-**Lưu ý**: Đây là dự án demo cho mục đích học tập và nghiên cứu. Không sử dụng trong môi trường production mà không có đánh giá bảo mật đầy đủ.
+Tip: Giữ cùng khung thời gian trong Kibana/Frontend (15–30 phút) để ảnh demo nhất quán.
