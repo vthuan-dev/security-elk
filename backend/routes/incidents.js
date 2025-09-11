@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Incident = require('../models/Incident');
+const BlockedIP = require('../models/BlockedIP');
 const { protect } = require('../middleware/auth');
 
 // Simple validation helpers (avoid extra deps)
@@ -360,6 +361,33 @@ router.put('/bulk-status', protect, async (req, res, next) => {
     }
 
     res.json({ success: true, modifiedCount: result.modifiedCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/incidents/block-ip
+router.post('/block-ip', protect, async (req, res, next) => {
+  try {
+    const { ip, reason } = req.body || {};
+    if (!ip) return res.status(400).json({ success: false, message: 'ip là bắt buộc' });
+    const doc = await BlockedIP.findOneAndUpdate(
+      { ip },
+      { ip, reason: reason || '', blockedBy: req.user._id },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    return res.json({ success: true, data: doc });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/incidents/block-ip/:ip
+router.delete('/block-ip/:ip', protect, async (req, res, next) => {
+  try {
+    const { ip } = req.params;
+    const result = await BlockedIP.deleteOne({ ip });
+    return res.json({ success: true, deletedCount: result.deletedCount });
   } catch (err) {
     next(err);
   }

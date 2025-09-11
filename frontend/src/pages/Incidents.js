@@ -324,7 +324,22 @@ const Incidents = () => {
                   </td>
                   <td>{incident.category}</td>
                   <td>{formatDate(incident.detectedAt)}</td>
-                  <td>{(incident.ipAddresses || []).join(', ') || 'N/A'}</td>
+                  <td>
+                    {(incident.ipAddresses || []).join(', ') || 'N/A'}
+                    {(incident.ipAddresses && incident.ipAddresses.length > 0) && (
+                      <button style={{ marginLeft: 8 }} onClick={async () => {
+                        const ip = incident.ipAddresses[0];
+                        const reason = prompt(`Chặn IP ${ip}? Nhập lý do (tuỳ chọn):`, 'auto-block from dashboard');
+                        try {
+                          const token = localStorage.getItem('token');
+                          await axios.post('/api/incidents/block-ip', { ip, reason }, { headers: { 'Authorization': `Bearer ${token}` } });
+                          alert(`Đã chặn IP ${ip}`);
+                        } catch (e) {
+                          alert(e.response?.data?.message || 'Chặn IP thất bại');
+                        }
+                      }}>Chặn IP</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

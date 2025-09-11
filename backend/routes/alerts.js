@@ -4,6 +4,7 @@ const { protect } = require('../middleware/auth');
 const Incident = require('../models/Incident');
 const User = require('../models/User');
 const https = require('https');
+const BlockedIP = require('../models/BlockedIP');
 
 /**
  * @swagger
@@ -100,6 +101,14 @@ router.post('/webhook', async (req, res) => {
     if (payload.query_key) ipCandidates.push(payload.query_key);
     const uniqueIps = [...new Set(ipCandidates.filter(Boolean))];
 
+    // Kiểm tra blocklist: nếu tất cả IP nằm trong blocklist, đánh dấu incident là contained và không gửi Telegram
+    let isFullyBlocked = false;
+    if (uniqueIps.length > 0) {
+      const blocked = await BlockedIP.find({ ip: { $in: uniqueIps } }).select('ip').lean();
+      const blockedSet = new Set(blocked.map(b => b.ip));
+      isFullyBlocked = uniqueIps.every(ip => blockedSet.has(ip));
+    }
+
     // Resolve default owner (createdBy)
     let ownerId = (req.user && req.user.id) || process.env.DEFAULT_INCIDENT_OWNER_ID;
     if (!ownerId) {
@@ -134,7 +143,7 @@ router.post('/webhook', async (req, res) => {
     // Telegram notification (nếu cấu hình)
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
-    if (botToken && chatId) {
+    if (botToken && chatId && !isFullyBlocked) {
       const text = encodeURIComponent(
         `🚨 Incident: ${title}\nSeverity: ${severity}\nCategory: ${category}\nIPs: ${uniqueIps.join(', ') || 'N/A'}\nTime: ${new Date().toISOString()}`
       );
