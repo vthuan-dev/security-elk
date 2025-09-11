@@ -2,111 +2,231 @@
 
 Nền tảng giám sát – phát hiện – cảnh báo – phản ứng sự cố bảo mật thời gian gần thực dựa trên ELK Stack (Elasticsearch, Logstash, Kibana) và Dashboard UI (React/Node/MongoDB).
 
-## 1) Thành phần & cổng dịch vụ
-- Elasticsearch: 9200
-- Kibana: 5601
-- Logstash: 5044/5000 (input), 9600 (API)
-- Backend API: 5001 (publish ra host; container chạy 5000)
-- Frontend Dashboard: 3000
-- MongoDB: 27017
+## 🚀 Quick Start
 
-Các thành phần được điều phối bằng Docker Compose trong `docker-compose.yml`.
-
-## 2) Yêu cầu
-- Ubuntu 20.04+ (host/VM)
+### Yêu cầu hệ thống
+- Ubuntu 20.04+ hoặc Docker-compatible OS
 - Docker 24+, Docker Compose v2
-- Dung lượng trống tối thiểu 5GB
+- RAM tối thiểu: 4GB (khuyến nghị 8GB)
+- Dung lượng trống: 5GB+
 
-## 3) Khởi chạy nhanh
+### Cài đặt và chạy
+
 ```bash
+# 1. Clone repository
 git clone <repository-url>
-cd security1
-docker compose up -d
-```
-Chờ ~1–2 phút cho healthchecks ổn định, sau đó truy cập:
-- Frontend: http://localhost:3000
-- Kibana: http://localhost:5601
-- Elasticsearch: http://localhost:9200
-- Backend API (host): http://localhost:5001
+cd security-elk
 
-Kiểm tra nhanh:
+# 2. Khởi chạy tất cả services
+docker-compose up -d
+
+# 3. Chờ services khởi động (1-2 phút)
+# Kiểm tra trạng thái
+docker-compose ps
+
+# 4. Truy cập ứng dụng
+# Frontend: http://localhost:3000
+# Kibana: http://localhost:5601
+# Elasticsearch: http://localhost:9200
+# Backend API: http://localhost:5001
+```
+
+### Thông tin đăng nhập mặc định
+- **Email:** `admin@security.local`
+- **Password:** `admin123`
+
+## 🔧 Troubleshooting
+
+### Lỗi 502 Bad Gateway
+Nếu gặp lỗi 502 khi đăng nhập, thực hiện các bước sau:
+
 ```bash
-curl -s http://localhost:5001/health | jq .
-docker compose ps
+# 1. Kiểm tra backend container
+docker ps | grep backend
+
+# 2. Nếu backend không chạy, rebuild và start lại
+docker-compose build backend
+docker-compose up -d backend
+
+# 3. Kiểm tra logs backend
+docker-compose logs backend
+
+# 4. Reset admin password nếu cần
+docker exec backend node scripts/reset-admin-password.js
 ```
 
-## 4) Luồng hoạt động
-1. Beats thu thập log → Logstash chuẩn hóa/làm giàu → Elasticsearch.
-2. Kibana phục vụ điều tra/ trực quan.
-3. ElastAlert2 khớp rule (port scan, ssh bruteforce, sudo, network surge) → gọi webhook `POST /api/alerts/webhook`.
-4. Backend tạo Incident (MongoDB), phát realtime (Socket.IO) và gửi Telegram (nếu cấu hình).
-5. Frontend hiển thị Dashboard/Incidents.
+### Lỗi Permission Denied
+Nếu backend không thể tạo logs directory:
 
-## 5) Cấu hình cảnh báo Telegram
-Biến môi trường được đặt trong `docker-compose.yml` của service `backend`:
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-
-Chỉ cần giữ nguyên (hoặc thay bằng của bạn), khi rule khớp → ElastAlert gọi webhook → Backend gửi Telegram tự động.
-
-## 6) Demo nhanh (3 ảnh báo cáo)
-Tạo lưu lượng từ máy tấn công (ví dụ Windows 192.168.1.15) tới VM/host 192.168.1.8:
-
-1) Port scan để kích hoạt rule (đủ ≥20 cổng trong 2 phút)
-```powershell
-nmap -Pn -sT -p 1-200 -T4 192.168.1.8
-```
-2) Kibana Discover xác nhận log (Chọn Last 5–15 minutes)
-- KQL: `event.dataset: flow AND source.ip: 192.168.1.15`
-
-3) Quan sát Incident + Telegram
-- Incidents: http://192.168.1.8:3000/incidents
-- Telegram: nhận tin “Port scan detected …”.
-
-SQLi demo (tùy chọn):
 ```bash
-curl "http://192.168.1.8:3000/?q=' OR '1'='1" -I
+# Rebuild backend với quyền phù hợp
+docker-compose build --no-cache backend
+docker-compose up -d backend
 ```
-Kibana filter: `event.dataset: http AND source.ip: 192.168.1.15`.
 
-## 7) Bộ rule ElastAlert2 tích hợp
-Các rule nằm tại `elk-stack/elastalert/rules/` và đã được nối webhook:
-- `port_scan.yaml`: cardinality theo `event.dataset: flow` (≥20 cổng/2 phút)
-- `ssh_bruteforce.yaml`: 10 lần thất bại/5 phút (source.ip)
-- `failed_login.yaml`: failed logins ≥3/2 phút
-- `sudo_escalation.yaml`: sudo session/error bất thường
-- `network_stress.yaml`: spike traffic
+### Các lỗi thường gặp khác
 
-Sau khi chỉnh rule, chạy:
+**Elasticsearch không khởi động:**
 ```bash
-docker compose restart elastalert
+# Tăng memory limit
+sudo sysctl -w vm.max_map_count=262144
+docker-compose restart elasticsearch
 ```
 
-## 8) Troubleshooting nhanh
-- Nmap không thấy host: dùng `-Pn` hoặc đảm bảo VM ở Bridged/Port-Forwarding đúng.
-- Không thấy log nmap trong Kibana: chọn index `packetbeat*`, filter `event.dataset: flow`, time range 5–15 phút, kiểm `source.ip` đúng.
-- Không thấy Telegram: kiểm tra biến `TELEGRAM_BOT_TOKEN/CHAT_ID`, log backend và `docker logs elastalert`.
-- Frontend không gọi đúng API: backend publish ra host cổng 5001; nếu cần, chỉnh `REACT_APP_API_URL` → `http://localhost:5001`.
-
-## 9) Cấu trúc thư mục
-```
-security1/
-├── backend/                 # Node.js API server (Express, JWT, Socket.IO)
-├── frontend/                # React dashboard
-├── elk-stack/               # Elasticsearch/Logstash/Kibana/Beats/ElastAlert configs
-├── docker-compose.yml       # Orchestration
-├── scripts/                 # Demo scripts
-└── docs/                    # Tài liệu bổ sung
+**MongoDB connection failed:**
+```bash
+# Kiểm tra MongoDB container
+docker-compose logs mongodb
+# Restart nếu cần
+docker-compose restart mongodb backend
 ```
 
-## 10) Lưu ý bảo mật
-- Repo demo bật CORS `*` và CSP mở để thuận tiện test; siết lại allowlist khi production.
-- Bảo vệ webhook `/api/alerts/webhook` bằng token header hoặc allowlist mạng nội bộ khi triển khai thật.
-- Chuyển sang HTTPS/WSS end-to-end cho môi trường sản xuất.
+**Frontend không load:**
+```bash
+# Rebuild frontend
+docker-compose build frontend
+docker-compose up -d frontend
+```
 
-## 11) Giấy phép & hỗ trợ
-- License: MIT
-- Issues/Support: tạo issue trong repo
+## 📊 Cổng dịch vụ
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Frontend Dashboard | 3000 | React UI |
+| Backend API | 5001 | Node.js API |
+| Elasticsearch | 9200 | Search engine |
+| Kibana | 5601 | Visualization |
+| Logstash | 5044, 5000, 9600 | Log processing |
+| MongoDB | 27017 | Database |
+
+## 🎯 Demo và Testing
+
+### Tạo sự cố giả lập
+
+**Port Scan Detection:**
+```bash
+# Từ máy khác trong mạng
+nmap -Pn -sT -p 1-200 -T4 <IP_HOST>
+```
+
+**SSH Brute Force:**
+```bash
+# Chạy script demo
+./scripts/simulate_bruteforce.sh
+```
+
+**Network Stress:**
+```bash
+# Chạy script demo
+./scripts/simulate_network_stress.sh
+```
+
+### Kiểm tra trong Kibana
+1. Truy cập http://localhost:5601
+2. Vào Discover
+3. Chọn index pattern `packetbeat*` hoặc `filebeat*`
+4. Filter theo thời gian (Last 15 minutes)
+5. Tìm kiếm events liên quan
+
+## 🔔 Cấu hình cảnh báo
+
+### Telegram Bot
+Cập nhật trong `docker-compose.yml`:
+```yaml
+environment:
+  - TELEGRAM_BOT_TOKEN=your_bot_token
+  - TELEGRAM_CHAT_ID=your_chat_id
+```
+
+### ElastAlert Rules
+Các rule cảnh báo trong `elk-stack/elastalert/rules/`:
+- `port_scan.yaml` - Phát hiện quét cổng
+- `ssh_bruteforce.yaml` - Tấn công brute force SSH
+- `failed_login.yaml` - Đăng nhập thất bại
+- `sudo_escalation.yaml` - Sử dụng sudo bất thường
+- `network_stress.yaml` - Tăng đột biến traffic
+
+## 🏗️ Cấu trúc dự án
+
+```
+security-elk/
+├── backend/                 # Node.js API (Express, JWT, Socket.IO)
+│   ├── models/             # MongoDB models
+│   ├── routes/             # API routes
+│   ├── middleware/         # Authentication, error handling
+│   ├── utils/              # Logger, helpers
+│   └── scripts/            # Database scripts
+├── frontend/               # React Dashboard
+│   ├── src/
+│   │   ├── components/     # React components
+│   │   ├── pages/          # Page components
+│   │   ├── contexts/       # React contexts
+│   │   └── utils/          # API configuration
+├── elk-stack/              # ELK Stack configurations
+│   ├── elasticsearch/      # ES configs
+│   ├── logstash/           # Logstash pipelines
+│   ├── kibana/             # Kibana configs
+│   ├── filebeat/           # Filebeat configs
+│   ├── auditbeat/          # Auditbeat configs
+│   ├── packetbeat/         # Packetbeat configs
+│   └── elastalert/         # Alert rules
+├── scripts/                # Demo and utility scripts
+├── docs/                   # Documentation
+└── docker-compose.yml      # Docker orchestration
+```
+
+## 🔒 Bảo mật
+
+⚠️ **Lưu ý:** Cấu hình hiện tại dành cho demo/testing:
+- CORS cho phép tất cả origins (`*`)
+- CSP (Content Security Policy) được tắt
+- Rate limiting được giảm nhẹ
+- Trust proxy được bật
+
+**Để production:**
+1. Cấu hình CORS whitelist cụ thể
+2. Bật CSP và các security headers
+3. Sử dụng HTTPS/WSS
+4. Cấu hình rate limiting nghiêm ngặt
+5. Bảo vệ webhook endpoints
+
+## 📝 API Documentation
+
+Truy cập API docs tại: http://localhost:5001/docs
+
+### Endpoints chính:
+- `POST /api/auth/login` - Đăng nhập
+- `GET /api/dashboard/stats` - Thống kê dashboard
+- `GET /api/incidents` - Danh sách sự cố
+- `POST /api/alerts/webhook` - Webhook cho ElastAlert
+
+## 🐛 Debug và Logs
+
+```bash
+# Xem logs của tất cả services
+docker-compose logs
+
+# Xem logs của service cụ thể
+docker-compose logs backend
+docker-compose logs frontend
+docker-compose logs elasticsearch
+
+# Theo dõi logs real-time
+docker-compose logs -f backend
+```
+
+## 📞 Hỗ trợ
+
+Nếu gặp vấn đề:
+1. Kiểm tra logs: `docker-compose logs`
+2. Kiểm tra trạng thái containers: `docker-compose ps`
+3. Restart services: `docker-compose restart`
+4. Tạo issue trong repository
+
+## 📄 License
+
+MIT License - Xem file LICENSE để biết thêm chi tiết.
 
 ---
-Tip: Giữ cùng khung thời gian trong Kibana/Frontend (15–30 phút) để ảnh demo nhất quán.
+
+**Tip:** Giữ cùng timezone và thời gian trong tất cả components để đảm bảo logs được hiển thị chính xác.

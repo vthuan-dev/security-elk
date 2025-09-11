@@ -1,20 +1,22 @@
 #!/bin/bash
 
-# Security Incident Response Dashboard Setup Script
-# Tác giả: Security Team
-# Phiên bản: 1.0
+# Security ELK Stack Setup Script
+# Tự động cài đặt và cấu hình toàn bộ hệ thống
 
-set -e
+set -e  # Exit on any error
 
-# Colors cho output
+echo "🚀 Security ELK Stack Setup Script"
+echo "=================================="
+
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function để in thông báo
-print_message() {
+# Function to print colored output
+print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
 
@@ -26,253 +28,187 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_header() {
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}  Security Incident Response${NC}"
-    echo -e "${BLUE}  Dashboard Setup Script${NC}"
-    echo -e "${BLUE}================================${NC}"
+print_step() {
+    echo -e "${BLUE}[STEP]${NC} $1"
 }
 
-# Function kiểm tra dependencies
-check_dependencies() {
-    print_message "Kiểm tra dependencies..."
+# Check if running as root
+if [[ $EUID -eq 0 ]]; then
+   print_error "Script không nên chạy với quyền root. Vui lòng chạy với user thường."
+   exit 1
+fi
+
+# Check Docker installation
+print_step "Kiểm tra Docker installation..."
+if ! command -v docker &> /dev/null; then
+    print_error "Docker chưa được cài đặt. Vui lòng cài đặt Docker trước."
+    echo "Hướng dẫn cài đặt: https://docs.docker.com/engine/install/"
+    exit 1
+fi
+
+if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    print_error "Docker Compose chưa được cài đặt. Vui lòng cài đặt Docker Compose trước."
+    echo "Hướng dẫn cài đặt: https://docs.docker.com/compose/install/"
+    exit 1
+fi
+
+print_status "Docker và Docker Compose đã được cài đặt ✓"
+
+# Check Docker daemon
+print_step "Kiểm tra Docker daemon..."
+if ! docker info &> /dev/null; then
+    print_error "Docker daemon không chạy. Vui lòng khởi động Docker service:"
+    echo "sudo systemctl start docker"
+    exit 1
+fi
+
+print_status "Docker daemon đang chạy ✓"
+
+# Set system parameters for Elasticsearch
+print_step "Cấu hình system parameters cho Elasticsearch..."
+if [ "$(cat /proc/sys/vm/max_map_count)" -lt 262144 ]; then
+    print_warning "Tăng vm.max_map_count cho Elasticsearch..."
+    sudo sysctl -w vm.max_map_count=262144
     
-    # Kiểm tra Docker
-    if ! command -v docker &> /dev/null; then
-        print_error "Docker không được cài đặt. Vui lòng cài đặt Docker trước."
+    # Make it permanent
+    if ! grep -q "vm.max_map_count=262144" /etc/sysctl.conf; then
+        echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+        print_status "Đã cấu hình vm.max_map_count vĩnh viễn"
+    fi
+fi
+
+# Check available memory
+print_step "Kiểm tra RAM available..."
+TOTAL_MEM=$(free -m | awk 'NR==2{printf "%.0f", $2}')
+if [ "$TOTAL_MEM" -lt 4000 ]; then
+    print_warning "RAM hiện tại: ${TOTAL_MEM}MB - Khuyến nghị tối thiểu 4GB"
+    print_warning "Hệ thống có thể chạy chậm với RAM thấp"
+else
+    print_status "RAM: ${TOTAL_MEM}MB ✓"
+fi
+
+# Check available disk space
+print_step "Kiểm tra dung lượng ổ cứng..."
+AVAILABLE_SPACE=$(df . | awk 'NR==2 {print $4}')
+AVAILABLE_GB=$((AVAILABLE_SPACE / 1024 / 1024))
+if [ "$AVAILABLE_GB" -lt 5 ]; then
+    print_warning "Dung lượng trống: ${AVAILABLE_GB}GB - Khuyến nghị tối thiểu 5GB"
+    print_warning "Có thể không đủ dung lượng cho Elasticsearch data"
+else
+    print_status "Dung lượng trống: ${AVAILABLE_GB}GB ✓"
+fi
+
+# Create necessary directories
+print_step "Tạo thư mục cần thiết..."
+mkdir -p logs
+mkdir -p data/elasticsearch
+mkdir -p data/mongodb
+
+# Build and start services
+print_step "Build và khởi động services..."
+print_status "Đang build Docker images (có thể mất vài phút)..."
+
+# Use docker compose or docker-compose based on availability
+if docker compose version &> /dev/null; then
+    COMPOSE_CMD="docker compose"
+else
+    COMPOSE_CMD="docker-compose"
+fi
+
+$COMPOSE_CMD build --no-cache
+
+print_status "Đang khởi động services..."
+$COMPOSE_CMD up -d
+
+# Wait for services to be healthy
+print_step "Chờ services khởi động hoàn toàn..."
+print_status "Kiểm tra trạng thái services..."
+
+# Function to check service health
+check_service() {
+    local service=$1
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if $COMPOSE_CMD ps $service | grep -q "healthy\|Up"; then
+            return 0
+        fi
+        print_status "Chờ $service khởi động... ($attempt/$max_attempts)"
+        sleep 10
+        ((attempt++))
+    done
+    return 1
+}
+
+# Check critical services
+services=("elasticsearch" "mongodb" "backend" "frontend")
+for service in "${services[@]}"; do
+    if ! check_service $service; then
+        print_error "Service $service không khởi động được"
+        print_status "Xem logs: $COMPOSE_CMD logs $service"
         exit 1
     fi
-    
-    # Kiểm tra Docker Compose
-    if ! command -v docker-compose &> /dev/null; then
-        print_error "Docker Compose không được cài đặt. Vui lòng cài đặt Docker Compose trước."
-        exit 1
-    fi
-    
-    # Kiểm tra Node.js (cho development)
-    if ! command -v node &> /dev/null; then
-        print_warning "Node.js không được cài đặt. Chỉ có thể chạy trong Docker."
-    fi
-    
-    print_message "Tất cả dependencies đã sẵn sàng!"
-}
+    print_status "$service đã sẵn sàng ✓"
+done
 
-# Function tạo file .env
-create_env_file() {
-    if [ ! -f .env ]; then
-        print_message "Tạo file .env..."
-        cat > .env << EOF
-# Security Incident Response Dashboard Environment Variables
+# Reset admin password to ensure it works
+print_step "Reset admin password..."
+if $COMPOSE_CMD exec -T backend node scripts/reset-admin-password.js; then
+    print_status "Admin password đã được reset ✓"
+else
+    print_warning "Không thể reset admin password tự động"
+fi
 
-# Application
-NODE_ENV=production
-PORT=5000
-FRONTEND_URL=http://localhost:3000
+# Test API endpoints
+print_step "Kiểm tra API endpoints..."
+sleep 5
 
-# MongoDB
-MONGODB_URI=mongodb://admin:password123@mongodb:27017/security_incidents?authSource=admin
+# Test health endpoint
+if curl -s http://localhost:5001/health > /dev/null; then
+    print_status "Backend API hoạt động ✓"
+else
+    print_warning "Backend API chưa sẵn sàng"
+fi
 
-# JWT
-JWT_SECRET=your-super-secret-jwt-key-change-in-production
-JWT_EXPIRE=30d
+# Test frontend
+if curl -s http://localhost:3000 > /dev/null; then
+    print_status "Frontend hoạt động ✓"
+else
+    print_warning "Frontend chưa sẵn sàng"
+fi
 
-# Elasticsearch
-ELASTICSEARCH_URL=http://elasticsearch:9200
+# Test Elasticsearch
+if curl -s http://localhost:9200/_cluster/health > /dev/null; then
+    print_status "Elasticsearch hoạt động ✓"
+else
+    print_warning "Elasticsearch chưa sẵn sàng"
+fi
 
-# Email Configuration (SMTP)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM=noreply@security.local
-
-# Slack Configuration
-SLACK_WEBHOOK_URL=your-slack-webhook-url
-SLACK_CHANNEL=#security-alerts
-
-# Telegram Configuration
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-TELEGRAM_CHAT_ID=your-chat-id
-
-# Logging
-LOG_LEVEL=info
-
-# Security
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-EOF
-        print_message "File .env đã được tạo!"
-    else
-        print_message "File .env đã tồn tại."
-    fi
-}
-
-# Function tạo thư mục logs
-create_logs_directory() {
-    print_message "Tạo thư mục logs..."
-    mkdir -p backend/logs
-    mkdir -p logs
-    print_message "Thư mục logs đã được tạo!"
-}
-
-# Function build và start containers
-start_containers() {
-    print_message "Khởi chạy containers..."
-    
-    # Pull images
-    print_message "Đang tải Docker images..."
-    docker-compose pull
-    
-    # Build images
-    print_message "Đang build images..."
-    docker-compose build
-    
-    # Start services
-    print_message "Đang khởi động services..."
-    docker-compose up -d
-    
-    print_message "Containers đã được khởi động!"
-}
-
-# Function kiểm tra health của services
-check_services_health() {
-    print_message "Kiểm tra health của services..."
-    
-    # Đợi services khởi động
-    sleep 30
-    
-    # Kiểm tra Elasticsearch
-    if curl -s http://localhost:9200 > /dev/null; then
-        print_message "✓ Elasticsearch đang chạy"
-    else
-        print_warning "✗ Elasticsearch chưa sẵn sàng"
-    fi
-    
-    # Kiểm tra MongoDB
-    if docker-compose exec -T mongodb mongosh --eval "db.runCommand('ping')" > /dev/null 2>&1; then
-        print_message "✓ MongoDB đang chạy"
-    else
-        print_warning "✗ MongoDB chưa sẵn sàng"
-    fi
-    
-    # Kiểm tra Backend API
-    if curl -s http://localhost:5000/health > /dev/null; then
-        print_message "✓ Backend API đang chạy"
-    else
-        print_warning "✗ Backend API chưa sẵn sàng"
-    fi
-    
-    # Kiểm tra Frontend
-    if curl -s http://localhost:3000 > /dev/null; then
-        print_message "✓ Frontend đang chạy"
-    else
-        print_warning "✗ Frontend chưa sẵn sàng"
-    fi
-    
-    # Kiểm tra Kibana
-    if curl -s http://localhost:5601 > /dev/null; then
-        print_message "✓ Kibana đang chạy"
-    else
-        print_warning "✗ Kibana chưa sẵn sàng"
-    fi
-}
-
-# Function hiển thị thông tin truy cập
-show_access_info() {
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}  Access Information${NC}"
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${GREEN}Frontend Dashboard:${NC} http://localhost:3000"
-    echo -e "${GREEN}Backend API:${NC} http://localhost:5000"
-    echo -e "${GREEN}Kibana:${NC} http://localhost:5601"
-    echo -e "${GREEN}Elasticsearch:${NC} http://localhost:9200"
-    echo -e "${GREEN}MongoDB:${NC} localhost:27017"
-    echo ""
-    echo -e "${YELLOW}Default Users:${NC}"
-    echo -e "Admin: admin@security.local / admin123"
-    echo -e "Analyst: analyst@security.local / analyst123"
-    echo -e "Viewer: viewer@security.local / viewer123"
-    echo ""
-    echo -e "${YELLOW}Useful Commands:${NC}"
-    echo -e "View logs: docker-compose logs -f"
-    echo -e "Stop services: docker-compose down"
-    echo -e "Restart services: docker-compose restart"
-    echo -e "Update services: docker-compose pull && docker-compose up -d"
-}
-
-# Function cleanup
-cleanup() {
-    print_message "Dọn dẹp tài nguyên..."
-    docker-compose down -v
-    docker system prune -f
-    print_message "Cleanup hoàn tất!"
-}
-
-# Function help
-show_help() {
-    echo "Usage: $0 [OPTION]"
-    echo ""
-    echo "Options:"
-    echo "  setup     Setup và khởi động toàn bộ hệ thống"
-    echo "  start     Khởi động services"
-    echo "  stop      Dừng services"
-    echo "  restart   Khởi động lại services"
-    echo "  status    Kiểm tra trạng thái services"
-    echo "  logs      Xem logs"
-    echo "  cleanup   Dọn dẹp tài nguyên"
-    echo "  help      Hiển thị help"
-    echo ""
-    echo "Examples:"
-    echo "  $0 setup    # Setup và khởi động lần đầu"
-    echo "  $0 start    # Khởi động services"
-    echo "  $0 logs     # Xem logs real-time"
-}
-
-# Main script
-main() {
-    case "${1:-setup}" in
-        "setup")
-            print_header
-            check_dependencies
-            create_env_file
-            create_logs_directory
-            start_containers
-            check_services_health
-            show_access_info
-            ;;
-        "start")
-            print_message "Khởi động services..."
-            docker-compose up -d
-            ;;
-        "stop")
-            print_message "Dừng services..."
-            docker-compose down
-            ;;
-        "restart")
-            print_message "Khởi động lại services..."
-            docker-compose restart
-            ;;
-        "status")
-            print_message "Trạng thái services..."
-            docker-compose ps
-            ;;
-        "logs")
-            print_message "Xem logs..."
-            docker-compose logs -f
-            ;;
-        "cleanup")
-            cleanup
-            ;;
-        "help"|"-h"|"--help")
-            show_help
-            ;;
-        *)
-            print_error "Option không hợp lệ: $1"
-            show_help
-            exit 1
-            ;;
-    esac
-}
-
-# Chạy main function
-main "$@"
+# Display final information
+echo ""
+echo "🎉 Setup hoàn tất!"
+echo "=================="
+echo ""
+print_status "Các services đã được khởi động:"
+echo "  📱 Frontend Dashboard: http://localhost:3000"
+echo "  🔍 Kibana:             http://localhost:5601"
+echo "  🔎 Elasticsearch:      http://localhost:9200"
+echo "  🚀 Backend API:        http://localhost:5001"
+echo ""
+print_status "Thông tin đăng nhập:"
+echo "  📧 Email:    admin@security.local"
+echo "  🔑 Password: admin123"
+echo ""
+print_status "Các lệnh hữu ích:"
+echo "  Xem logs:           $COMPOSE_CMD logs"
+echo "  Restart services:   $COMPOSE_CMD restart"
+echo "  Stop services:      $COMPOSE_CMD down"
+echo "  Xem trạng thái:     $COMPOSE_CMD ps"
+echo ""
+print_warning "Lưu ý:"
+echo "  - Chờ 1-2 phút để tất cả services ổn định hoàn toàn"
+echo "  - Nếu gặp lỗi, kiểm tra logs: $COMPOSE_CMD logs <service_name>"
+echo "  - Để demo, chạy các script trong thư mục scripts/"
+echo ""
+echo "Chúc bạn sử dụng vui vẻ! 🚀"
