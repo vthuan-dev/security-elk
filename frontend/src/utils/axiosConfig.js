@@ -1,8 +1,11 @@
 import axios from 'axios';
 
 // Đặt URL cơ sở cho tất cả các yêu cầu API
-// Sử dụng absolute URL để có thể truy cập từ bất kỳ domain nào
-axios.defaults.baseURL = process.env.REACT_APP_API_URL || 'http://192.168.1.8:5001';
+// Ưu tiên biến môi trường; nếu không có, dùng same-origin để proxy qua Nginx (/api → backend)
+const defaultBaseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin
+  : 'http://localhost:3000';
+axios.defaults.baseURL = process.env.REACT_APP_API_URL || defaultBaseUrl;
 
 // Đặt tiêu đề chung
 axios.defaults.headers.common['Content-Type'] = 'application/json';

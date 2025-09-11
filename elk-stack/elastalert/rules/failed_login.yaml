@@ -10,9 +10,15 @@ filter:
     query_string:
       query: "auth_message:*Failed*password*"
 
+query_key: source.ip
+realert:
+  minutes: 30
+
 alert:
   - post
 http_post_url: "http://backend:5000/api/alerts/webhook"
+http_post_json: true
+http_post_all_values: true
 http_post_payload:
   title: "Nhiều lần đăng nhập thất bại"
   description: "Failed logins >= 3 trong 2 phút"

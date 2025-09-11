@@ -128,7 +128,8 @@ services:
       dockerfile: Dockerfile
     container_name: frontend
     environment:
-      - REACT_APP_API_URL=http://localhost:5000
+      # Dùng same-origin cho API (proxy /api của Nginx), không hard-code host IP
+      - REACT_APP_API_URL=
       - REACT_APP_ELASTICSEARCH_URL=http://localhost:9200
       - REACT_APP_KIBANA_URL=http://localhost:5601
     volumes:

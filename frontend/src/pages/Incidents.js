@@ -197,8 +197,12 @@ const Incidents = () => {
             </select>
           </label>
           <button onClick={() => {
-            const headers = ['title','severity','status','category','detectedAt','createdAt'];
-            const rows = incidents.map(a => headers.map(h => (a[h] ?? '')).join(','));
+            const headers = ['title','severity','status','category','detectedAt','createdAt','ipAddresses'];
+            const rows = incidents.map(a => headers.map(h => {
+              const v = a[h];
+              if (Array.isArray(v)) return '"' + v.join(' ') + '"';
+              return (v ?? '');
+            }).join(','));
             const csv = [headers.join(','), ...rows].join('\n');
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
@@ -300,7 +304,7 @@ const Incidents = () => {
                 <th>Trạng thái</th>
                 <th>Danh mục</th>
                 <th>Thời gian phát hiện</th>
-                <th>Hệ thống ảnh hưởng</th>
+                <th>IP tấn công</th>
               </tr>
             </thead>
             <tbody>
@@ -320,7 +324,7 @@ const Incidents = () => {
                   </td>
                   <td>{incident.category}</td>
                   <td>{formatDate(incident.detectedAt)}</td>
-                  <td>{incident.affectedSystems?.join(', ') || 'N/A'}</td>
+                  <td>{(incident.ipAddresses || []).join(', ') || 'N/A'}</td>
                 </tr>
               ))}
             </tbody>
