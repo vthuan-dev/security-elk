@@ -18,7 +18,7 @@ git clone <repository-url>
 cd security-elk
 
 # 2. Khởi chạy tất cả services
-docker-compose up -d
+docker-compose up --build -d
 
 # 3. Chờ services khởi động (1-2 phút)
 # Kiểm tra trạng thái
